@@ -47,6 +47,8 @@ const selectorTempl = `%[1]s
 {{- include "%[2]s.selectorLabels" . | nindent 6 }}
 %[3]s`
 
+const envValue = "{{ .Values.%[1]s.%[2]s.%[3]s }}"
+
 // New creates processor for k8s Deployment resource.
 func New() helmify.Processor {
 	return &deployment{}
@@ -245,14 +247,12 @@ func processPodContainer(name string, appMeta helmify.AppMetadata, c corev1.Cont
 	if err != nil {
 		return c, errors.Wrap(err, "unable to set deployment value field")
 	}
-	for _, e := range c.Env {
-		if e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil {
-			e.ValueFrom.SecretKeyRef.Name = appMeta.TemplatedName(e.ValueFrom.SecretKeyRef.Name)
-		}
-		if e.ValueFrom != nil && e.ValueFrom.ConfigMapKeyRef != nil {
-			e.ValueFrom.ConfigMapKeyRef.Name = appMeta.TemplatedName(e.ValueFrom.ConfigMapKeyRef.Name)
-		}
+
+	c, err = processEnv(name, appMeta, c, values)
+	if err != nil {
+		return c, err
 	}
+
 	for _, e := range c.EnvFrom {
 		if e.SecretRef != nil {
 			e.SecretRef.Name = appMeta.TemplatedName(e.SecretRef.Name)
@@ -276,6 +276,30 @@ func processPodContainer(name string, appMeta helmify.AppMetadata, c corev1.Cont
 		if err != nil {
 			return c, errors.Wrap(err, "unable to set container resources value")
 		}
+	}
+	return c, nil
+}
+
+func processEnv(name string, appMeta helmify.AppMetadata, c corev1.Container, values *helmify.Values) (corev1.Container, error) {
+	containerName := strcase.ToLowerCamel(c.Name)
+	for i := 0; i < len(c.Env); i++ {
+		if c.Env[i].ValueFrom != nil {
+			switch {
+			case c.Env[i].ValueFrom.SecretKeyRef != nil:
+				c.Env[i].ValueFrom.SecretKeyRef.Name = appMeta.TemplatedName(c.Env[i].ValueFrom.SecretKeyRef.Name)
+			case c.Env[i].ValueFrom.ConfigMapKeyRef != nil:
+				c.Env[i].ValueFrom.ConfigMapKeyRef.Name = appMeta.TemplatedName(c.Env[i].ValueFrom.ConfigMapKeyRef.Name)
+			case c.Env[i].ValueFrom.FieldRef != nil, c.Env[i].ValueFrom.ResourceFieldRef != nil:
+				// nothing to change here, keep the original value
+			}
+			continue
+		}
+
+		err := unstructured.SetNestedField(*values, c.Env[i].Value, name, containerName, "env", strcase.ToLowerCamel(strings.ToLower(c.Env[i].Name)))
+		if err != nil {
+			return c, errors.Wrap(err, "unable to set deployment value field")
+		}
+		c.Env[i].Value = fmt.Sprintf(envValue, name, containerName, strcase.ToLowerCamel(strings.ToLower(c.Env[i].Name)))
 	}
 	return c, nil
 }
