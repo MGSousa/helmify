@@ -100,6 +100,9 @@ func (d deployment) Process(appMeta helmify.AppMetadata, obj *unstructured.Unstr
 	}
 	podLabels += fmt.Sprintf("\n      {{- include \"%s.selectorLabels\" . | nindent 8 }}", appMeta.ChartName())
 
+	// add custom podLabels from values.yaml if exists
+	podLabels += fmt.Sprintf("\n      {{- if .Values.%[1]s }}{{- toYaml .Values.%[1]s | nindent 8 }}{{- end }}", "podLabels")
+
 	podAnnotations := ""
 	if len(depl.Spec.Template.ObjectMeta.Annotations) != 0 {
 		podAnnotations, err = yamlformat.Marshal(map[string]interface{}{"annotations": depl.Spec.Template.ObjectMeta.Annotations}, 6)
